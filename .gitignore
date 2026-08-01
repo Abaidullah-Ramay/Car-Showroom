@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Environments & secrets
+.venv/
+.env
+
+# OS
+.DS_Store
+
+# Data artifacts — all regenerable via the pipeline/ scripts.
+# The two built indexes are large (~120 MB); see README for how to rebuild them.
+data/*.csv
+data/*.npy
+!data/.gitkeep
+
+# Logs
+*.log
+.pytest_cache/
+
+# Local tooling
+.claude/
+.agents/
