@@ -21,7 +21,7 @@ uv run streamlit run app.py
 ## Layout
 
 ```
-app.py                  Streamlit entry point, search grid + chat, side by side
+app.py                  Streamlit entry point, chat on top, results below
 showroom/
   config.py             paths and model ids, anchored to the repo root
   query_parser.py       lifts hard requirements out of free text

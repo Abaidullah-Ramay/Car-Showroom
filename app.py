@@ -53,6 +53,11 @@ st.title("Abaid Automobile Showroom")
 # constraints explicitly through his tools. The dropdowns duplicated both.
 RESULTS_PER_SEARCH = 12
 
+# Prints each tool call above Sam's reply, e.g. `search_inventory {'fuel': 'electric'}`.
+# Useful when checking whether he actually looked something up or improvised it, but
+# it is developer detail a customer should not see. Flip to True to debug.
+SHOW_TOOL_CALLS = False
+
 
 @st.cache_data
 def inventory_summary():
@@ -213,98 +218,93 @@ def run_agent(user_text):
     st.session_state.history = result["messages"]
 
 
-results_col, chat_col = st.columns([3, 2], gap="large")
+# Sam runs the full page width across the top, with the results underneath.
+heading, clear = st.columns([6, 1], vertical_alignment="bottom")
+heading.subheader("Sam the salesman")
+# Lived in the sidebar before; it belongs next to the conversation it clears.
+if clear.button("Clear", icon=":material/delete_sweep:", width="stretch"):
+    st.session_state.history = []
+    st.rerun()
 
-with results_col:
-    meta = sink.get("meta")
-    if meta is not None:
-        enforced = []
-        if meta.constraints:
-            enforced.append(describe(meta.constraints))
-        if meta.price_from_query:
-            low, high = meta.price_range
-            if low is not None and high is not None:
-                enforced.append(f"**price ${low:,}–${high:,}**")
-            elif high is not None:
-                enforced.append(f"**price under ${high:,}**")
-            elif low is not None:
-                enforced.append(f"**price over ${low:,}**")
-        if enforced:
-            st.success(f"Enforcing {', '.join(enforced)} from your search.")
-        if meta.excluded:
-            st.info(f"Excluding {describe(meta.excluded)}.")
-        if meta.relaxed:
-            st.warning(
-                f"No cars in inventory match {describe(meta.relaxed)} alongside your "
-                f"other requirements, so that was relaxed. Results below match "
-                f"everything else you asked for."
-            )
-
-    results = sink.get("results")
-    if results is None:
-        st.info(
-            "Tell Sam what you are after and the cars will appear here. Try "
-            "\"a family SUV under $15,000, automatic\" or \"what is your cheapest "
-            "electric car?\"",
-            icon=":material/arrow_forward:",
+transcript = st.container(height=360, border=True)
+with transcript:
+    if not st.session_state.history:
+        st.chat_message("assistant").write(
+            f"Welcome to Abaid Automobile Showroom. I'm Sam. We have "
+            f"{total_cars:,} vehicles on the lot right now. How can I help you "
+            f"today?"
         )
-    elif results.empty:
-        st.info("No cars matched. Ask Sam to relax a requirement or widen the search.")
-    else:
-        st.subheader(f"Showing {len(results)} cars")
-        st.caption("Click any card to see the full listing.")
-        cols = st.columns(2)
-        for i, (_, row) in enumerate(results.iterrows()):
-            with cols[i % 2]:
-                render_card(row)
+    for msg in st.session_state.history:
+        if isinstance(msg, HumanMessage):
+            st.chat_message("user").write(md_safe(msg.content))
+        elif isinstance(msg, AIMessage):
+            if SHOW_TOOL_CALLS:
+                for call in msg.tool_calls or []:
+                    args = {k: v for k, v in call["args"].items() if v not in (None, "")}
+                    st.caption(f"🔎 `{call['name']}` {args}")
+            if msg.content:
+                st.chat_message("assistant").write(md_safe(msg.content))
+
+user_text = st.chat_input("Describe the car you want, or ask Sam anything")
+
+# Handled here rather than after the grid so the spinner appears next to the
+# conversation and the results below render from the updated sink on this same run,
+# instead of flashing the previous search first.
+if user_text:
+    with st.spinner("Sam is looking…"):
+        try:
+            run_agent(user_text)
+        except Exception as exc:
+            st.session_state.history.append(
+                AIMessage(f"Sorry, something went wrong on my end: {exc}")
+            )
+    # The transcript above already rendered, so a rerun is what actually shows the
+    # new messages.
+    st.rerun()
+
+st.caption(
+    "Requirements you state outright (fuel, transmission, body type, drivetrain, "
+    "budget) are enforced exactly; the rest is matched by meaning. Sam can also "
+    "look up any listing, compare cars and answer questions about what is in stock."
+)
+
+st.divider()
+
+# The "enforcing X" and "excluding Y" banners are gone: Sam already says the same
+# thing in prose, so they were the same information twice.
+#
+# The relaxation warning stays. It is the one case where the results do NOT match
+# what was asked for, and Sam is a language model that may or may not mention it on
+# any given turn. This banner fires deterministically, which is what stops the
+# original bug (quietly returning cars that violate a stated requirement) coming
+# back through the side door.
+meta = sink.get("meta")
+if meta is not None and meta.relaxed:
+    st.warning(
+        f"No cars in inventory match {describe(meta.relaxed)} alongside your "
+        f"other requirements, so that was relaxed. Results below match "
+        f"everything else you asked for."
+    )
+
+results = sink.get("results")
+if results is None:
+    st.info(
+        "Ask Sam above and the cars will appear here. Try \"a family SUV under "
+        "$15,000, automatic\" or \"what is your cheapest electric car?\"",
+        icon=":material/arrow_upward:",
+    )
+elif results.empty:
+    st.info("No cars matched. Ask Sam to relax a requirement or widen the search.")
+else:
+    st.subheader(f"Showing {len(results)} cars")
+    st.caption("Click any card to see the full listing.")
+    # Full width now, so three across instead of two.
+    cols = st.columns(3)
+    for i, (_, row) in enumerate(results.iterrows()):
+        with cols[i % 3]:
+            render_card(row)
 
 # Popped rather than read, so dismissing the modal does not immediately reopen it
 # on the next rerun. Only one dialog may be called per script run.
 if "selected_car" in st.session_state:
     show_car_details(st.session_state.pop("selected_car"))
-
-with chat_col:
-    heading, clear = st.columns([3, 1], vertical_alignment="bottom")
-    heading.subheader("Sam the salesman")
-    # Lived in the sidebar before; it belongs next to the conversation it clears.
-    if clear.button("Clear", icon=":material/delete_sweep:", width="stretch"):
-        st.session_state.history = []
-        st.rerun()
-
-    st.caption(
-        "Describe what you want and Sam pulls it up on the left. Requirements you "
-        "state outright (fuel, transmission, body type, drivetrain, budget) are "
-        "enforced exactly; the rest is matched by meaning. He can also look up any "
-        "listing, compare cars and answer questions about what is in stock."
-    )
-
-    transcript = st.container(height=560, border=True)
-    with transcript:
-        if not st.session_state.history:
-            st.chat_message("assistant").write(
-                f"Welcome to Abaid Automobile Showroom. I'm Sam. We have "
-                f"{total_cars:,} vehicles on the lot right now. How can I help you "
-                f"today?"
-            )
-        for msg in st.session_state.history:
-            if isinstance(msg, HumanMessage):
-                st.chat_message("user").write(md_safe(msg.content))
-            elif isinstance(msg, AIMessage):
-                # Surface tool calls so it's clear what Sam actually looked up
-                # rather than what he might have made up.
-                for call in msg.tool_calls or []:
-                    args = {k: v for k, v in call["args"].items() if v not in (None, "")}
-                    st.caption(f"🔎 `{call['name']}` {args}")
-                if msg.content:
-                    st.chat_message("assistant").write(md_safe(msg.content))
-
-    user_text = st.chat_input("Describe the car you want, or ask Sam anything")
-    if user_text:
-        with st.spinner("Sam is looking…"):
-            try:
-                run_agent(user_text)
-            except Exception as exc:
-                st.session_state.history.append(
-                    AIMessage(f"Sorry, something went wrong on my end: {exc}")
-                )
-        st.rerun()

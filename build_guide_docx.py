@@ -136,7 +136,7 @@ def build():
 
     sub(doc, "What you end up with")
     bullets(doc, [
-        "A Streamlit app, search grid on the left, chat with a sales agent on the right.",
+        "A Streamlit app driven entirely by conversation, with the results grid underneath.",
         "A search engine that treats stated requirements as filters and everything else as semantics.",
         "A LangGraph ReAct agent with four tools, grounded in the inventory.",
         "Clickable result cards that open a full detail modal.",
@@ -784,6 +784,48 @@ with st.container(horizontal=True):
 "Welcome to Abaid Automobile Showroom. I'm Sam. We have 14,828 vehicles on the
 lot right now. How can I help you today?"
 """)
+
+    sub(doc, "Where to put it")
+    body(doc,
+         "Chat beside the results is the obvious arrangement and it is the wrong one "
+         "here. Once the conversation is the only input, it should not be a side "
+         "panel. Sam goes full width across the top and the grid runs underneath:")
+    code(doc, """
+st.subheader("Sam the salesman")
+transcript = st.container(height=360, border=True)   # scrolls internally
+...
+user_text = st.chat_input("Describe the car you want, or ask Sam anything")
+
+st.divider()
+cols = st.columns(3)        # full width now, so three across instead of two
+""")
+    bullets(doc, [
+        "Cap the transcript height, a tall one pushes every car below the fold. 360px scrolls internally and keeps the grid reachable.",
+        "Handle the chat input immediately after st.chat_input, not at the end of the script. At the end the spinner appears far from the conversation and the grid renders the previous search before the rerun corrects it.",
+        "You still need st.rerun() afterwards, the transcript above has already rendered, so nothing else will show the new messages.",
+    ])
+
+    sub(doc, "Knowing what to hide")
+    body(doc,
+         "Two pieces of instrumentation are worth building and then hiding. Printing "
+         "each tool call above the reply is invaluable while developing, because it "
+         "shows at a glance whether the agent looked something up or improvised it. "
+         "It is also developer detail a customer should never see. Put it behind a "
+         "flag rather than deleting it:")
+    code(doc, """
+SHOW_TOOL_CALLS = False     # flip to True to see what Sam actually called
+""")
+    body(doc,
+         "The same goes for a banner restating the constraints that were applied. "
+         "Sam already says them in prose, so on screen it is the same information "
+         "twice. Delete it.")
+    note(doc,
+         "Keep the relaxation warning though. \"Enforcing fuel = electric\" confirms "
+         "you got what you asked for, which the results already show. The relaxation "
+         "warning says the opposite: these results do NOT match what you asked for. "
+         "The agent is instructed to say so and usually does, but it is a language "
+         "model, and this is the one message where staying silent recreates the "
+         "original bug. A deterministic banner is the backstop.")
 
     # ----------------------------------------------------------------- phase 13
     phase(doc, "Phase 13: Tests")
