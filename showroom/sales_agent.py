@@ -21,7 +21,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from showroom.config import CHAT_MODEL
-from showroom.search_engine import CATEGORICAL_COLS, search_cars
+from showroom.search_engine import CATEGORICAL_COLS, SearchResult, search_cars
 
 load_dotenv()
 
@@ -33,6 +33,13 @@ are talking to a customer browsing the lot.
 HOW YOU WORK
 - Be warm, brief and concrete. Two or three sentences per turn unless the customer \
 asks for detail. Sound like a person who knows the lot, not a brochure.
+- Write plain prose. No markdown: no **bold**, no bullet points, no headings, no \
+tables. You are speaking to someone across a desk, not writing a document. When you \
+list two or three cars, do it in a sentence.
+- Write prices as plain numbers with a dollar sign and commas, e.g. $14,995. Never \
+wrap them in asterisks or backticks.
+- Never use em dashes or long hyphens in your replies. Use a comma, a full stop, or \
+brackets instead. Ordinary hyphens inside a word such as "four-wheel drive" are fine.
 - When the customer describes what they want, call `search_inventory` and tell them \
 what actually came back.
 - When they ask about a specific car on screen, call `get_car_details` for the full \
@@ -41,7 +48,7 @@ listing before answering.
 call `inventory_stats`.
 - To weigh two cars against each other, call `compare_cars`.
 
-GROUNDING — THIS MATTERS MORE THAN SOUNDING HELPFUL
+GROUNDING. THIS MATTERS MORE THAN SOUNDING HELPFUL
 - Only ever discuss cars a tool returned in this conversation. Never invent a \
 listing, a price, a mileage or a spec.
 - The structured fields (price, year, mileage, fuel, transmission, drivetrain, body \
@@ -62,7 +69,7 @@ Prices are asking prices. Mileage is odometer reading at listing time."""
 
 
 def _fmt_row(row):
-    """One compact line per car — the agent gets facts, not raw ad copy."""
+    """One compact line per car. The agent gets facts, not raw ad copy."""
     make = row["manufacturer"] if row["manufacturer"] != "unknown" else ""
     name = " ".join(str(p) for p in [int(row["year"]), make, row["model"]] if p != "")
     return (
@@ -81,15 +88,12 @@ def _fmt_rows(df):
 def describe_grid(sink):
     """The cars currently on the customer's screen, injected each turn."""
     df = sink.get("results")
-    from_box = sink.get("from_box")
-
-    if df is None or (df.empty and not from_box):
+    if df is None:
         return "\n\nNothing is on the customer's screen yet."
 
     if df.empty:
-        ctx = ("\n\nThe customer just searched the search box for "
-               f"{sink.get('label')!r} and it returned NOTHING. Their screen is "
-               "empty.")
+        ctx = (f"\n\nThe last search ({sink.get('label')!r}) returned NOTHING. The "
+               "customer's screen is empty.")
     else:
         ctx = ("\n\nCURRENTLY ON THE CUSTOMER'S SCREEN "
                f"(from the search {sink.get('label', 'they ran')!r}):\n"
@@ -118,18 +122,10 @@ def describe_grid(sink):
             ctx += (f"\nIMPORTANT: the lot has nothing matching {terms} alongside "
                     f"their other requirements, so that requirement was dropped to "
                     f"produce these results. You must tell them this outright. The "
-                    f"cars above are NOT guaranteed to match {fields} — check each "
+                    f"cars above are NOT guaranteed to match {fields}. Check each "
                     f"car's own values above before describing it, and never "
                     f"summarise the group as though it satisfies {terms}.")
 
-    if from_box:
-        ctx += (
-            "\n\nThe customer typed that into the search box themselves and these "
-            "results are already on their screen. Greet them and summarise what "
-            "came back — call out a couple of standouts and the price range. Do NOT "
-            "call search_inventory again for this turn; the search already ran. If "
-            "it returned nothing, say so plainly and suggest what to try instead."
-        )
     return ctx
 
 
@@ -214,6 +210,7 @@ def build_tools(cars, embeddings, embedder, sink):
             if order:
                 df = df.sort_values(order[0], ascending=order[1])
             results, relaxed = df.head(limit), {}
+            found = SearchResult(results, price_range=(min_price, max_price))
         else:
             # Reuse the app's ranking so chat and grid never disagree.
             found = search_cars(
@@ -224,8 +221,23 @@ def build_tools(cars, embeddings, embedder, sink):
             )
             results, relaxed = found.results, found.relaxed
 
+        # The UI reads `meta` to show what was enforced and what had to be relaxed.
+        # search_cars treats explicit tool arguments as deliberate choices and keeps
+        # them out of `constraints`, so fold them back in or the banner under-reports
+        # exactly the requirements the customer stated most plainly.
+        explicit = {k: v for k, v in
+                    _spec(fuel, transmission, body_type, drive, manufacturer).items()
+                    if v}
+        found.constraints = {**explicit, **found.constraints}
+        if min_price is not None or max_price is not None:
+            found.price_from_query = True
+            low, high = found.price_range
+            found.price_range = (min_price if min_price is not None else low,
+                                 max_price if max_price is not None else high)
+
         sink["results"] = results
         sink["label"] = query or "attribute search"
+        sink["meta"] = found
 
         note = ""
         if relaxed:
@@ -263,12 +275,12 @@ def build_tools(cars, embeddings, embedder, sink):
                     f"dropping {drop}={requested[drop]} would give {len(df):,} car(s)"
                 )
         if not alternatives:
-            return ("\n\nNOTE: no single requirement is the blocker — this "
+            return ("\n\nNOTE: no single requirement is the blocker. This "
                     "combination is far outside what the lot carries. Ask the "
                     "customer which requirement matters most.")
         return ("\n\nNOTE: nothing matches all of that. " + "; ".join(alternatives) +
                 ". Tell the customer what is unavailable and offer the closest "
-                "alternative — do not pretend it matches.")
+                "alternative. Do not pretend it matches.")
 
     @tool
     def get_car_details(listing_id: int) -> str:
@@ -330,7 +342,7 @@ def build_tools(cars, embeddings, embedder, sink):
         electric SUVs do you have?" or "what brands do you carry?".
 
         Args:
-            group_by: Column to break the count down by — one of fuel, transmission,
+            group_by: Column to break the count down by. One of fuel, transmission,
                 type, drive, manufacturer, condition.
             fuel: Restrict to this fuel before counting.
             transmission: Restrict to this transmission before counting.
@@ -357,7 +369,7 @@ def build_tools(cars, embeddings, embedder, sink):
             else:
                 counts = df[col].value_counts().head(15)
                 breakdown = ", ".join(f"{k}: {v:,}" for k, v in counts.items())
-                lines.append(f"By {col} — {breakdown}")
+                lines.append(f"By {col}: {breakdown}")
         return "\n".join(lines)
 
     return [search_inventory, get_car_details, compare_cars, inventory_stats]

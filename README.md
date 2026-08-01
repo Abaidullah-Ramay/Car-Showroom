@@ -2,7 +2,7 @@
 
 Semantic used-car search over ~14,800 Craigslist listings, with a LangGraph sales
 agent ("Sam") that can search the lot, look up listings and answer questions about
-stock — grounded in the data rather than improvising.
+stock, grounded in the data rather than improvising.
 
 ## Quick start
 
@@ -10,7 +10,7 @@ stock — grounded in the data rather than improvising.
 uv sync
 echo "OPENAI_API_KEY=sk-..." > .env
 
-# build the search index (see "Rebuilding the index" — takes ~2 hours, mostly GPU)
+# build the search index (see "Rebuilding the index", takes ~2 hours, mostly GPU)
 uv run python -m pipeline.build_dataset
 uv run python -m pipeline.vibe_tagging
 uv run python -m pipeline.build_embeddings
@@ -21,7 +21,7 @@ uv run streamlit run app.py
 ## Layout
 
 ```
-app.py                  Streamlit entry point — search grid + chat, side by side
+app.py                  Streamlit entry point, search grid + chat, side by side
 showroom/
   config.py             paths and model ids, anchored to the repo root
   query_parser.py       lifts hard requirements out of free text
@@ -46,12 +46,12 @@ $20k"* is split in two:
 
 1. `query_parser.py` extracts `fuel=electric`, `transmission=automatic`,
    `type=sedan`, `max_price=20000` and applies them as exact filters.
-2. The remainder — *"family car with good fuel mileage"* — is embedded and used to
+2. The remainder, *"family car with good fuel mileage"*, is embedded and used to
    rank whatever survived the filters.
 
 This matters because embedding the whole query averages every clause into one
 vector. Measured on this corpus, the four-clause version of that query pushed the
-best electric car to **rank #38**, behind 37 gas cars — while `"electric car"` alone
+best electric car to **rank #38**, behind 37 gas cars, while `"electric car"` alone
 returned electrics in the top 8. The signal was there; the mixing destroyed it.
 
 Two consequences worth knowing:
@@ -75,9 +75,10 @@ A LangGraph `create_react_agent` with four tools:
 | `compare_cars` | 2–4 listings side by side |
 | `inventory_stats` | aggregates over the whole lot; does not touch the grid |
 
-He reuses `search_cars`, so chat and grid can never disagree about ranking. The
-cars currently on screen are re-injected each turn, so "tell me about the second
-one" works. Using the search box also triggers a comment from him.
+Sam is the only input: there is no separate search box. His `search_inventory`
+writes to the same sink the grid renders from, so chat and results can never
+disagree. The cars currently on screen are re-injected each turn, so "tell me about
+the second one" works, and clicking any card opens a full detail modal.
 
 He is instructed to discuss only cars a tool returned, to treat the structured
 fields as reliable and the seller's prose as hearsay, and to say plainly when
@@ -94,7 +95,7 @@ uv run python -m pipeline.build_embeddings   # ~3 min, ~$0.05 of OpenAI embeddin
 Only `build_embeddings` costs money. `vibe_tagging` runs `facebook/bart-large-mnli`
 locally and resumes from its checkpoint if interrupted.
 
-Changing `EMBED_MODEL` in `showroom/config.py` means rebuilding the embeddings —
+Changing `EMBED_MODEL` in `showroom/config.py` means rebuilding the embeddings, because
 vectors from different models are not comparable.
 
 ## Tests
@@ -104,12 +105,12 @@ uv run pytest
 ```
 
 40 tests, all offline. They cover constraint extraction, budget parsing (including
-the mileage and model-year false positives), relaxation order, sidebar precedence,
-and every agent tool.
+the mileage and model-year false positives), relaxation order, explicit-filter
+precedence, and every agent tool.
 
 ## Known data limitations
 
-The Craigslist source contains seller mislabels — there is a "Camry" tagged
+The Craigslist source contains seller mislabels, there is a "Camry" tagged
 `electric` and a 2021 Tesla tagged `hybrid`. Filtering is only ever as accurate as
 the labels. Sam is prompted to report what the record says rather than assert it as
 fact, but the underlying rows are wrong.

@@ -1,4 +1,4 @@
-"""Generate PROJECT_GUIDE.docx — the full build-from-scratch walkthrough.
+"""Generate PROJECT_GUIDE.docx, the full build-from-scratch walkthrough.
 
 Kept as a script rather than a hand-edited binary so the guide can be regenerated
 whenever the project changes.
@@ -49,17 +49,20 @@ def body(doc, text, italic=False):
 
 
 def bullets(doc, items):
+    """Bullet list. A short lead-in before the first comma is bolded as a label.
+
+    Guarded on length and punctuation so it only fires on real "label, explanation"
+    bullets and leaves ordinary comma-containing sentences alone.
+    """
     for item in items:
         p = doc.add_paragraph(style="List Bullet")
         p.paragraph_format.space_after = Pt(3)
-        # bold everything before the first em dash, if there is one
-        if " — " in item:
-            head, tail = item.split(" — ", 1)
+        head, sep, tail = item.partition(", ")
+        if sep and len(head) <= 34 and ":" not in head and not head.endswith("."):
             r = p.add_run(head)
             r.bold = True
             r.font.size = Pt(10.5)
-            r = p.add_run(" — " + tail)
-            r.font.size = Pt(10.5)
+            p.add_run(sep + tail).font.size = Pt(10.5)
         else:
             p.add_run(item).font.size = Pt(10.5)
 
@@ -128,32 +131,33 @@ def build():
     body(doc,
          "This guide rebuilds the project end to end. Every phase is a checkpoint: "
          "run the commands, confirm the stated output, then move on. Phases 7 to 10 "
-         "are the interesting ones — they are the bugs the first working version "
+         "are the interesting ones: they are the bugs the first working version "
          "shipped with, and why the fixes take the shape they do.")
 
     sub(doc, "What you end up with")
     bullets(doc, [
-        "A Streamlit app — search grid on the left, chat with a sales agent on the right.",
+        "A Streamlit app, search grid on the left, chat with a sales agent on the right.",
         "A search engine that treats stated requirements as filters and everything else as semantics.",
         "A LangGraph ReAct agent with four tools, grounded in the inventory.",
+        "Clickable result cards that open a full detail modal.",
         "~14,800 listings, embedded and searchable.",
         "40 offline tests.",
     ])
 
     sub(doc, "Prerequisites")
     bullets(doc, [
-        "uv — the Python package manager (astral.sh/uv).",
-        "Python 3.12 — uv installs it if missing.",
-        "An OpenAI API key — used for embeddings (~$0.05 total) and the chat agent.",
-        "A Kaggle account — kagglehub prompts for credentials on first download.",
-        "Apple Silicon or an NVIDIA GPU — for the vibe-tagging step. CPU works but is very slow.",
+        "uv, the Python package manager (astral.sh/uv).",
+        "Python 3.12, uv installs it if missing.",
+        "An OpenAI API key, used for embeddings (~$0.05 total) and the chat agent.",
+        "A Kaggle account, kagglehub prompts for credentials on first download.",
+        "Apple Silicon or an NVIDIA GPU, for the vibe-tagging step. CPU works but is very slow.",
     ])
 
     # ------------------------------------------------------------------ phase 0
-    phase(doc, "Phase 0 — Environment scaffold")
+    phase(doc, "Phase 0: Environment scaffold")
     body(doc,
          "Open VS Code, then open the parent folder where you keep projects "
-         "(e.g. ~/Projects) — not the car project itself, since it does not exist yet.")
+         "(e.g. ~/Projects), not the car project itself, since it does not exist yet.")
     body(doc, "Open the integrated terminal (Ctrl+`) and run:")
     code(doc, """
 # confirm uv is installed
@@ -191,14 +195,14 @@ git commit -m "chore: initial scaffold via uv init"
          "git remote add origin <url> && git push -u origin main.")
 
     # ------------------------------------------------------------------ phase 1
-    phase(doc, "Phase 1 — Get the data and look at it")
+    phase(doc, "Phase 1: Get the data and look at it")
     body(doc, "Run this first, in a notebook, to see what you are working with:")
     code(doc, """
 uv add kagglehub
 uv run jupyter notebook
 """)
     body(doc,
-         "That opens Jupyter using the uv-managed env — the uv run prefix makes sure "
+         "That opens Jupyter using the uv-managed env. The uv run prefix makes sure "
          "it is the project's .venv and not some other Python on your system. Create "
          "a notebook called data-exploration.ipynb, select the matching kernel, and run:")
     code(doc, """
@@ -229,13 +233,13 @@ print("duplicate descriptions:", cars["description"].duplicated().sum())
 """)
     body(doc, "Three things that shape every later decision:")
     bullets(doc, [
-        "Heavy duplication — dealers repost the same ad across regions.",
-        "Description length is bimodal — a handful of words at one end, 2000-word dealer boilerplate at the other.",
-        "fuel is extremely imbalanced — gas dominates. Remember this; it causes a real bug in Phase 7.",
+        "Heavy duplication: dealers repost the same ad across regions.",
+        "Description length is bimodal: a handful of words at one end, 2000-word dealer boilerplate at the other.",
+        "fuel is extremely imbalanced and gas dominates. Remember this; it causes a real bug in Phase 7.",
     ])
 
     # ------------------------------------------------------------------ phase 2
-    phase(doc, "Phase 2 — Clean and sample")
+    phase(doc, "Phase 2: Clean and sample")
     body(doc,
          "426k rows is more than you need and most of it is noise. Filter to listings "
          "that carry real signal:")
@@ -280,14 +284,14 @@ print(cars_sampled["fuel"].value_counts())
     body(doc,
          "This is correct for body type and quietly wrong for everything else. "
          "Stratifying on type says nothing about fuel, so the result is 90.6% gas with "
-         "37 electric cars out of 12,429 — and exactly one electric sedan. Phase 8 "
+         "37 electric cars out of 12,429, and exactly one electric sedan. Phase 8 "
          "fixes it. The final pipeline/build_dataset.py does both steps at once, but "
          "it is worth seeing why the correction is needed.")
 
     # ------------------------------------------------------------------ phase 3
-    phase(doc, "Phase 3 — Vibe tagging")
+    phase(doc, "Phase 3: Vibe tagging")
     body(doc,
-         "People shop by feel — 'something good for the family', 'a fun weekend car'. "
+         "People shop by feel, 'something good for the family', 'a fun weekend car'. "
          "Score every listing against six vibes using zero-shot classification, so "
          "that language has something to match.")
     code(doc, """
@@ -310,18 +314,18 @@ classifier = pipeline("zero-shot-classification",
                       model="facebook/bart-large-mnli", device=device)
 """)
     note(doc,
-         "About 7 minutes per 1,000 rows on Apple MPS — roughly 110 minutes for the "
+         "About 7 minutes per 1,000 rows on Apple MPS, roughly 110 minutes for the "
          "full table. Checkpoint every 20 batches and support resuming; you will "
          "interrupt it at least once.")
     body(doc,
          "One subtlety: multi_label=False makes the six scores a softmax across the "
          "labels, so they are competitive shares, not independent confidences. "
          "vibe_family averages 0.31 and is the top label for 37% of rows. That makes "
-         "them a weak ranking prior, not a filter — which is why Phase 6 z-scores "
+         "them a weak ranking prior, not a filter, which is why Phase 6 z-scores "
          "them before blending.")
 
     # ------------------------------------------------------------------ phase 4
-    phase(doc, "Phase 4 — Embeddings")
+    phase(doc, "Phase 4: Embeddings")
     body(doc,
          "Semantic search needs a vector per listing. What you put into that vector "
          "matters more than which model you use.")
@@ -338,7 +342,7 @@ def build_embedding_text(row):
     body(doc,
          "Lead with the structured facts. The first version of this project embedded "
          "the row id plus the raw Craigslist blurb, which meant the clean fuel, "
-         "transmission and type columns were never in the vectors at all — so a query "
+         "transmission and type columns were never in the vectors at all, so a query "
          "saying 'automatic' had nothing reliable to match against, and the leading "
          "numeric id was pure noise.")
     code(doc, """
@@ -352,11 +356,11 @@ uv run python -m pipeline.build_embeddings
     body(doc,
          "Build the array as a plain positional list and save it directly. If you "
          "round-trip through a vector store, do not assume .get() returns insertion "
-         "order — and never trust a row-count assert to prove alignment, because it "
+         "order, and never trust a row-count assert to prove alignment, because it "
          "only checks length. A silent off-by-N here is very hard to debug later.")
 
     # ------------------------------------------------------------------ phase 5
-    phase(doc, "Phase 5 — The search engine")
+    phase(doc, "Phase 5: The search engine")
     body(doc, "Create showroom/search_engine.py. Cosine similarity is the core:")
     code(doc, """
 query_vec = np.array(embedder.embed_query(semantic_query))
@@ -366,26 +370,26 @@ sims = (embeddings @ query_vec) / (
 """)
     body(doc,
          "Add exact filters for the categorical columns and a price range, then sort. "
-         "At this point you have a working recommender — and it is subtly broken in "
+         "At this point you have a working recommender, and it is subtly broken in "
          "ways that only show up once you use it properly. That is Phase 7.")
 
     # ------------------------------------------------------------------ phase 6
-    phase(doc, "Phase 6 — The Streamlit app")
+    phase(doc, "Phase 6: The Streamlit app")
     code(doc, "uv run streamlit run app.py")
     body(doc, "Structure that matters:")
     bullets(doc, [
-        "@st.cache_data for the dataframe and embeddings — they load once, not per interaction.",
+        "@st.cache_data for the dataframe and embeddings: they load once, not per interaction.",
         "@st.cache_resource for the embedding client.",
         "st.form so the search only fires on submit, not on every keystroke.",
-        "st.session_state for anything that must survive a rerun — Streamlit re-executes the whole script top to bottom on every interaction.",
+        "st.session_state for anything that must survive a rerun, Streamlit re-executes the whole script top to bottom on every interaction.",
     ])
     note(doc,
          "use_container_width is deprecated. Use width=\"stretch\" instead.")
 
     # ------------------------------------------------------------------ phase 7
-    phase(doc, "Phase 7 — Diagnosing the flaws")
+    phase(doc, "Phase 7: Diagnosing the flaws")
     body(doc,
-         "The app works, so try a realistic query — one where you state several "
+         "The app works, so try a realistic query. Use one where you state several "
          "requirements at once, the way a real customer would:")
     code(doc, '"family car sedan with good fuel mileage. I want automatic transmission. Electric car."')
     body(doc, "Top 12 results: zero electric, three manual, one sedan. Every stated "
@@ -410,7 +414,7 @@ sims = (embeddings @ query_vec) / (
     body(doc,
          "Across all rows, similarities span 0.691 to 0.836 with a standard deviation "
          "of 0.0185. Every car is 'sort of similar' to any car query, so rank ordering "
-         "inside that band is mostly noise — the gap between #1 and #38 is 0.015.")
+         "inside that band is mostly noise: the gap between #1 and #38 is 0.015.")
 
     sub(doc, "4. The sampling left nothing to find")
     body(doc,
@@ -425,7 +429,7 @@ sims = (embeddings @ query_vec) / (
          "opposite of how they read.")
 
     # ------------------------------------------------------------------ phase 8
-    phase(doc, "Phase 8 — Fixing it")
+    phase(doc, "Phase 8: Fixing it")
 
     sub(doc, "Extract constraints from the query text")
     body(doc, "Create showroom/query_parser.py. Map phrasings onto the closed set of "
@@ -441,7 +445,7 @@ FUEL_PATTERNS = [
     body(doc,
          "Then strip the matched phrases from the text you embed. The constraints are "
          "already enforced exactly, so spending the semantic ranking on them again is "
-         "wasted — and actively harmful, since it is what diluted the query.")
+         "wasted, and actively harmful, since it is what diluted the query.")
 
     sub(doc, "Guard the false positives")
     body(doc,
@@ -459,8 +463,8 @@ GAS_FALSE_POSITIVES = re.compile(
 
     sub(doc, "Relax honestly when nothing matches")
     body(doc,
-         "If no car satisfies every requirement, drop them one at a time — weakest "
-         "first — and tell the user what was dropped. Never silently return something "
+         "If no car satisfies every requirement, drop them one at a time, weakest "
+         "first, and tell the user what was dropped. Never silently return something "
          "that violates what they asked for.")
     code(doc, 'RELAX_ORDER = ["drive", "type", "transmission", "fuel"]')
     body(doc,
@@ -498,10 +502,10 @@ score = 0.7 * _zscore(similarity) + 0.3 * _zscore(vibe)
     ])
 
     # ------------------------------------------------------------------ phase 9
-    phase(doc, "Phase 9 — Budget parsing")
+    phase(doc, "Phase 9: Budget parsing")
     body(doc,
          "Ask for 'cars under 5000 dollars' and you get cars at $6,200 and $7,500. The "
-         "parser handles fuel, transmission, body type and drivetrain — but not price.")
+         "parser handles fuel, transmission, body type and drivetrain, but not price.")
     body(doc, "It is worse than merely unfiltered. The digits go into the embedder, and "
               "'5000' matches the Fiat 500 and Ford 500 model names:")
     code(doc, """
@@ -514,22 +518,22 @@ after:   $1,850 | $1,995 | $2,500 | $3,200 | $3,495 | $3,595 | $4,499 | $4,990
 """)
     body(doc, "Two guards are essential:")
     bullets(doc, [
-        '"under 50,000 miles" — mileage, not a budget. Reject when a mileage unit follows.',
-        '"cars under 2015" — a model year, not a budget. Reject bare numbers in 1900–2100 unless a currency cue is present ($, dollars, or a k suffix).',
+        '"under 50,000 miles", mileage, not a budget. Reject when a mileage unit follows.',
+        '"cars under 2015", a model year, not a budget. Reject bare numbers in 1900–2100 unless a currency cue is present ($, dollars, or a k suffix).',
     ])
     body(doc,
          "Strip the digits from the embedded text unconditionally. This needs care: if "
          "your parser falls back to the original query when stripping leaves too "
          "little, that fallback will put the digits straight back. Budget spans must "
-         "never be restored — embed a neutral phrase instead, since the filter has "
+         "never be restored, embed a neutral phrase instead, since the filter has "
          "already done the real work.")
     body(doc,
          "Finally, intersect the parsed budget with the sidebar slider rather than "
          "letting one override the other. Both are real constraints; the tighter bound "
-         "wins. And never relax a budget — someone who says 'under $5,000' means it.")
+         "wins. And never relax a budget, someone who says 'under $5,000' means it.")
 
     # ----------------------------------------------------------------- phase 10
-    phase(doc, "Phase 10 — The sales agent")
+    phase(doc, "Phase 10: The sales agent")
     code(doc, "uv add langgraph")
     body(doc, "Create showroom/sales_agent.py with a LangGraph ReAct agent:")
     code(doc, """
@@ -555,7 +559,7 @@ def build_agent(cars, embeddings, embedder, sink):
     sub(doc, "The sink pattern")
     body(doc,
          "Tools close over a plain dict. When the agent searches, it writes results "
-         "there, and Streamlit reads it to repaint the grid — which is how 'show me "
+         "there, and Streamlit reads it to repaint the grid, which is how 'show me "
          "something cheaper' updates the screen instead of only being described in "
          "prose. Hold it in st.session_state and mutate it in place, never reassign: "
          "the tools captured that exact object.")
@@ -564,14 +568,14 @@ def build_agent(cars, embeddings, embedder, sink):
     bullets(doc, [
         "Only discuss cars a tool returned this conversation. Never invent a listing, price or spec.",
         "Structured fields are reliable; the seller's description is hearsay. Quote it as \"the listing says\".",
-        'A field reading "unknown" means the seller never stated it — never fill it in from the model name.',
+        'A field reading "unknown" means the seller never stated it, never fill it in from the model name.',
         "When a requirement was relaxed, results are NOT guaranteed to match it. Do not summarise the group as though they do.",
         "No service history, accident records or real-world range exist in this data. Say so.",
     ])
     note(doc,
          "That fourth rule was added after the agent described a relaxed search as "
          "'diesel 4x4 trucks' when drivetrain had just been dropped and two of six rows "
-         "had drive=unknown. It is a subtler version of the original bug — worth "
+         "had drive=unknown. It is a subtler version of the original bug, worth "
          "testing for explicitly.")
 
     sub(doc, "Make failed searches recoverable")
@@ -588,10 +592,201 @@ unavailable and offer the closest alternative - do not pretend it matches.
     body(doc,
          "The dataset says 'SUV' but 'sedan', and lowercases manufacturers. The model "
          "has no way to guess that, so map whatever it sends onto the real values "
-         "case-insensitively — otherwise body_type='suv' silently matches nothing.")
+         "case-insensitively, otherwise body_type='suv' silently matches nothing.")
+
+    sub(doc, "Rendering the replies: the dollar-sign trap")
+    body(doc,
+         "The first version of the chat produced text like this on screen:")
+    code(doc, """
+The range runs from
+3,000 ** to ** 3,000 ** to ** 22,300, with a couple standouts being the 2018
+Honda Civic Sport Hatchback at 14,995 ** with ** 28,123 miles ** and the **
+""")
+    body(doc,
+         "It looks like the model is emitting garbage. It is not. Streamlit's markdown "
+         "renders $...$ as LaTeX math, so the moment a reply quotes two prices, "
+         "everything between the first and second dollar sign is parsed as an "
+         "equation, the asterisks survive as literal math symbols and fragments get "
+         "duplicated. A salesperson quotes two prices in almost every sentence, so "
+         "this fires constantly.")
+    body(doc, "Escape the dollar signs before rendering:")
+    code(doc, r'''
+def md_safe(text):
+    """Streamlit treats `$...$` as LaTeX. Escape so prices render as prices."""
+    return str(text).replace("$", r"\$")
+
+st.chat_message("assistant").write(md_safe(msg.content))
+''')
+    note(doc,
+         "Apply it to the user's messages too, \"under $5,000 and over $1,000\" "
+         "breaks in exactly the same way.")
+    body(doc,
+         "Separately, tell the agent to drop markdown altogether. A narrow chat "
+         "column full of bold runs reads as clutter even when it renders correctly, "
+         "and plain prose is what a salesperson actually sounds like:")
+    code(doc, """
+- Write plain prose. No markdown: no **bold**, no bullet points, no headings, no
+  tables. You are speaking to someone across a desk, not writing a document.
+- Write prices as plain numbers with a dollar sign and commas, e.g. $14,995.
+""")
+    body(doc, "The two fixes are independent and you need both, escaping alone still "
+              "leaves the clutter, and the prompt alone still trips LaTeX on any "
+              "sentence containing two prices.")
 
     # ----------------------------------------------------------------- phase 11
-    phase(doc, "Phase 11 — Tests")
+    phase(doc, "Phase 11: The detail modal")
+    body(doc,
+         "Cards show a summary. Clicking one should open the full listing. Streamlit "
+         "has a native modal that supplies its own close button, so this needs no "
+         "custom component:")
+    code(doc, """
+@st.dialog("Vehicle details", width="large", on_dismiss="rerun")
+def show_car_details(car_id):
+    row = cars[cars["id"] == car_id].iloc[0]
+    st.markdown(f"### {car_title(row)}")
+    ...
+""")
+
+    sub(doc, "Opening it without it reopening forever")
+    body(doc,
+         "A button sets the selection; code after the grid opens the dialog. The "
+         "detail that matters is popping the state rather than reading it, if you "
+         "read it, the modal reopens on the very next rerun after the user closes it, "
+         "which is the classic version of this bug.")
+    code(doc, """
+# inside the card
+if st.button("View full details", key=f"card_{row['id']}", width="stretch"):
+    st.session_state.selected_car = int(row["id"])
+
+# after the grid, popped, not read
+if "selected_car" in st.session_state:
+    show_car_details(st.session_state.pop("selected_car"))
+""")
+    note(doc,
+         "Key the buttons by listing id, never by loop index. Index keys collide the "
+         "moment a new search reorders the grid and you open the wrong car. Also note "
+         "only one dialog may be called per script run.")
+
+    sub(doc, "What goes in it")
+    bullets(doc, [
+        "Four headline metrics, price, odometer, year, condition, as bordered st.metric tiles.",
+        "A two-column specification grid: body type, fuel, transmission, drivetrain, cylinders, size, paint, title status, VIN, posting date.",
+        "A horizontal bar chart of the six vibe scores, captioned as model-inferred impressions rather than manufacturer specs.",
+        "The seller's description in a scrollable bordered container, captioned as seller-written.",
+    ])
+
+    sub(doc, "The photo that wasn't there")
+    body(doc,
+         "The dataset has an image_url on 100% of rows, so photos look like a free "
+         "win. Check before building on it:")
+    code(doc, """
+# HEAD returns 405, that is "method not allowed", NOT a dead link.
+# Re-check with a GET range request before concluding anything:
+req = urllib.request.Request(url, headers={"Range": "bytes=0-2047",
+                                           "User-Agent": "Mozilla/5.0"})
+""")
+    body(doc,
+         "Result: 0 of 20 images resolve, and 0 of 3 listing pages resolve. Every URL "
+         "404s. This is a 2021 snapshot and Craigslist purges images when a listing "
+         "expires. Wiring image_url into the grid would have produced a page of "
+         "broken-image icons, and the 'open original listing' button would have been "
+         "a link that always fails.")
+    body(doc,
+         "The tempting fix is a stock photo looked up by make, model and year. Do not. "
+         "Two reasons, and the second is the real one:")
+    bullets(doc, [
+        "It would barely work, 4,284 distinct model strings across 14,828 rows, 2,820 of them appearing exactly once, in dirty free text like \"wrangleryj\" and \"veloster 3dr cpe auto\", with 5.8% missing a manufacturer entirely.",
+        "It would lie. A studio render of a clean 2004 Prius above \"200,000 miles, condition fair, salvage title\" tells the customer they are looking at that car. Used cars are individual; the photo is where a buyer reads wear and damage. This is the same failure as returning a manual when the customer asked for an automatic, just better dressed.",
+    ])
+    body(doc,
+         "The project shipped with no images at all. That is the honest answer when "
+         "the media is gone, and it costs nothing that matters, the modal already "
+         "carries every fact the data actually holds.")
+
+    sub(doc, "Removing the sidebar filters")
+    body(doc,
+         "The original app had eight sidebar filter widgets. Once the query parser "
+         "extracts fuel, transmission, body type, drivetrain and budget from the "
+         "sentence, and the agent passes the same constraints through its tools, the "
+         "dropdowns duplicate both paths. Delete them.")
+    note(doc,
+         "Watch for the controls in there that are not filters. \"Clear conversation\" "
+         "moved next to the chat it clears; the result count became a constant. "
+         "Deleting a panel wholesale quietly removes whatever else was living in it.")
+
+    # ----------------------------------------------------------------- phase 12
+    phase(doc, "Phase 12: Collapsing to one input")
+    body(doc,
+         "At this point the app has two ways to ask for a car: a search box and a "
+         "chat with Sam. They do the same job, so one of them has to go. Sam stays, "
+         "because he can also answer questions the box never could.")
+
+    sub(doc, "You probably do not need a new tool")
+    body(doc,
+         "The instinct is to add a filtering tool to the LangGraph workflow so the "
+         "agent can drive the grid. That work is already done. search_inventory "
+         "writes its results to the sink, and Streamlit renders the grid from the "
+         "sink, so the agent has been repainting the screen since the moment it was "
+         "built. Removing the search box is deletion, not addition:")
+    bullets(doc, [
+        "The st.form search box and its run_box_search() function, duplicating what search_inventory already does.",
+        "The entire from_box mechanism, which existed only so Sam could comment on a box search without re-running it. No box, no need.",
+        "The search_cars import in app.py, since the app no longer searches directly at all.",
+    ])
+    body(doc,
+         "The result is one search path instead of two implementations that had to "
+         "be kept in step. That whole class of bug disappears by construction.")
+
+    sub(doc, "The gap deletion opens")
+    body(doc,
+         "One thing does break, and it is easy to miss. The banners that report what "
+         "was enforced and what had to be relaxed are fed by sink[\"meta\"], which only "
+         "the search box was writing. Delete the box and the app silently loses the "
+         "transparency the whole project was built around. Have the tool write it:")
+    code(doc, """
+explicit = {k: v for k, v in _spec(fuel, transmission, body_type, drive,
+                                   manufacturer).items() if v}
+found.constraints = {**explicit, **found.constraints}
+sink["meta"] = found
+""")
+    note(doc,
+         "Note the merge. search_cars deliberately keeps explicitly-passed filters "
+         "out of `constraints`, because it treats them as deliberate choices rather "
+         "than inferred ones. The agent passes constraints explicitly, so without "
+         "folding them back in the banner under-reports exactly the requirements the "
+         "customer stated most plainly.")
+
+    sub(doc, "Say what is on the lot")
+    body(doc,
+         "With no filter dropdowns left, nothing tells the customer what the "
+         "dealership actually stocks. Put the totals in the header:")
+    code(doc, """
+@st.cache_data
+def inventory_summary():
+    counts = cars["type"].value_counts()
+    vague = [t for t in ("other", "unknown") if t in counts.index]
+    named = counts.drop(index=vague)
+    return len(cars), pd.concat([named, counts[vague]])
+
+st.markdown(f"**{total_cars:,} vehicles in stock.**")
+with st.container(horizontal=True):
+    for body_type, count in type_counts.items():
+        st.badge(f"{body_type} {count:,}", color="gray")
+""")
+    note(doc,
+         "Sorting purely by count puts \"unknown\" first, because it is the single "
+         "largest bucket. That is a poor opening line for a showroom, so real body "
+         "types lead and the catch-alls go last.")
+    body(doc,
+         "Greet the customer with the same number when the page loads, so the "
+         "conversation opens with something concrete rather than a blank prompt:")
+    code(doc, """
+"Welcome to Abaid Automobile Showroom. I'm Sam. We have 14,828 vehicles on the
+lot right now. How can I help you today?"
+""")
+
+    # ----------------------------------------------------------------- phase 13
+    phase(doc, "Phase 13: Tests")
     code(doc, """
 uv add --dev pytest
 uv run pytest
@@ -603,18 +798,43 @@ uv run pytest
         "Every stated requirement is honored.",
         '"good gas mileage" does not become fuel=gas.',
         "Relaxation drops the weakest constraint and protects fuel.",
-        "Sidebar filters override inferred ones.",
+        "Explicit filters override inferred ones.",
         "Budget phrasings, ranges and floors all bind.",
         "Mileage and bare model years are not read as budgets.",
         "Budget digits never reach the embedder.",
         "Every agent tool: casing, sink updates, clamped limits, unknown ids refused.",
     ])
 
-    # ----------------------------------------------------------------- phase 12
-    phase(doc, "Phase 12 — Final structure")
+    sub(doc, "Testing the UI itself")
+    body(doc,
+         "Booting the app and getting HTTP 200 proves almost nothing, Streamlit "
+         "serves a shell and only executes the script when a browser connects. "
+         "AppTest runs the real script headlessly and lets you click things:")
+    code(doc, """
+from streamlit.testing.v1 import AppTest
+
+at = AppTest.from_file("app.py")
+at.session_state["sink"] = {"results": sample_df, "label": "x", "meta": None}
+at.run()
+
+at.button[0].click().run()
+assert len(at.get("dialog")) == 1          # modal opened
+at.run()
+assert len(at.get("dialog")) == 0          # and does not reopen after dismissal
+""")
+    note(doc,
+         "This is how the reopening bug and the wrong-card-on-reorder bug were caught "
+         "before they ever reached the browser. Element accessors are named for the "
+         "element type, at.image, at.metric, at.button, and getting the name wrong "
+         "returns an empty list rather than an error, which reads exactly like a "
+         "missing element. Confirm against the element tree before believing a zero.")
+
+    # ----------------------------------------------------------------- phase 13
+    phase(doc, "Phase 14: Final structure")
     code(doc, """
 car-recom-system/
 ├── PROJECT_GUIDE.docx
+├── build_guide_docx.py         regenerates the guide above
 ├── README.md
 ├── app.py                      Streamlit entry point
 ├── pyproject.toml / uv.lock
@@ -650,10 +870,30 @@ uv run streamlit run app.py
 
     sub(doc, "What is still imperfect")
     bullets(doc, [
-        "Seller mislabels — the source has a Camry tagged electric and a Tesla tagged hybrid. Filtering is only as accurate as the labels.",
-        "Manufacturer is not a hard constraint — \"show me a Toyota\" ranks Toyotas highly but does not filter to them.",
+        "Seller mislabels, the source has a Camry tagged electric and a Tesla tagged hybrid. Filtering is only as accurate as the labels.",
+        "Manufacturer is not a hard constraint, \"show me a Toyota\" ranks Toyotas highly but does not filter to them.",
         "Vibe scores are softmax shares, not independent confidences, so they compare poorly across rows.",
+        "No images, the source photos expired. See Phase 11.",
     ])
+
+    sub(doc, "The thread running through all of it")
+    body(doc,
+         "Nearly every bug in this project was the same bug wearing a different "
+         "costume: the system presenting something as matching the request when it "
+         "did not.")
+    bullets(doc, [
+        "Ranking a manual car highly for \"I want automatic\", because nothing enforced the requirement.",
+        "Returning $7,500 cars for \"under 5000\", because price was never parsed.",
+        "Relaxing a constraint and describing the results as though it still held.",
+        "Quoting a seller's typo as an established spec.",
+        "Showing a stock photo of a different car than the one for sale.",
+    ])
+    body(doc,
+         "The fixes all share a shape too: enforce what was actually asked, and when "
+         "you cannot deliver it, say so plainly instead of returning the nearest thing "
+         "and hoping it passes. A recommender that admits \"we have no electric "
+         "sedans, here are the hybrids\" is more useful than one that silently "
+         "substitutes, and much easier to trust on the answers it does give.")
 
     doc.save(OUT)
     print(f"wrote {OUT}")
