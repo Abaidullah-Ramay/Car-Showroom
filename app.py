@@ -87,6 +87,23 @@ def demo_api_key():
     return str(from_secrets or os.environ.get("OPENAI_API_KEY", "")).strip()
 
 
+def secrets_diagnostic():
+    """Why no key was found, in terms an operator can act on.
+
+    Names only, never values. Shown only in the already-broken state, so it
+    distinguishes "nothing configured" from "configured under a different name"
+    from "nested under a TOML section", which otherwise look identical from
+    outside.
+    """
+    try:
+        names = sorted(st.secrets.keys())
+    except Exception as exc:
+        return f"st.secrets could not be read ({type(exc).__name__})."
+    if not names:
+        return "No secrets are configured for this app."
+    return "Secrets this app can see: " + ", ".join(names) + "."
+
+
 user_key = st.session_state.user_api_key
 own_key = bool(user_key)
 active_key = user_key or demo_api_key()
@@ -340,10 +357,14 @@ if can_talk:
 else:
     st.chat_input("Add your API key in the sidebar to continue", disabled=True)
     user_text = None
-    st.warning(
-        NO_KEY_CONFIGURED if not active_key else ALLOWANCE_SPENT,
-        icon=":material/key:",
-    )
+    if not active_key:
+        st.warning(NO_KEY_CONFIGURED, icon=":material/key:")
+        st.caption(
+            f"Operator note: {secrets_diagnostic()} Sam needs a top level "
+            f"`OPENAI_API_KEY` entry, not one nested under a section header."
+        )
+    else:
+        st.warning(ALLOWANCE_SPENT, icon=":material/key:")
 
 # Handled here rather than after the grid so the spinner appears next to the
 # conversation and the results below render from the updated sink on this same run,
