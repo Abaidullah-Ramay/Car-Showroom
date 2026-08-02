@@ -18,6 +18,8 @@ top-k ordering is unchanged. The array is cast back to float32 once at load time
 so runtime maths and memory are identical to before; only the file on disk is
 smaller.
 """
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -33,6 +35,31 @@ KEEP = [
     "vibe_ecofriendly",
 ]
 
+# This artifact is committed to a public repository, so the seller text gets a
+# second scrub. The pipeline's original clean already removed most contact details,
+# but a handful of formats survived it: twenty rows still carried phone numbers,
+# email addresses or urls. These patterns are deliberately broader than the first
+# pass, since a false positive here costs nothing and a miss publishes a stranger's
+# phone number.
+CONTACT_PATTERNS = [
+    r"[\w.+-]+@[\w-]+\.[\w.]{2,}",                        # email
+    # The pipeline's own phone pattern, kept verbatim. A "looser" rewrite turned out
+    # to be narrower on "(541) 480-3265", the commonest US format, and let a real
+    # number through. It also matches innocent digit runs such as a mileage next to
+    # a model year; that is the right trade here, because the structured columns
+    # carry those facts and the description is only prose.
+    r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+    r"\+?\d{1,2}[\s.-]\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}",   # with country code
+    # Trailing whitespace is deliberate: the first cleaning pass leaves "www. site.com"
+    # when it strips something between, and "www\.\S+" then fails to match.
+    r"https?://\s*\S+|www\.\s*\S+",
+]
+CONTACT = re.compile("|".join(CONTACT_PATTERNS), re.IGNORECASE)
+
+
+def scrub(text):
+    return re.sub(r"\s+", " ", CONTACT.sub(" ", str(text))).strip()
+
 
 def main():
     cars = pd.read_csv(CARS_CSV)
@@ -43,7 +70,14 @@ def main():
     if missing:
         raise SystemExit(f"source is missing expected columns: {missing}")
 
-    slim = cars[KEEP]
+    slim = cars[KEEP].copy()
+    before = slim["description_clean"].astype(str).str.contains(CONTACT, na=False).sum()
+    slim["description_clean"] = slim["description_clean"].map(scrub)
+    after = slim["description_clean"].str.contains(CONTACT, na=False).sum()
+    print(f"contact details scrubbed from seller text: {before} rows -> {after}")
+    if after:
+        raise SystemExit("contact details survived the scrub, do not publish this")
+
     slim.to_parquet(CARS_PARQUET, index=False, compression="zstd")
 
     half = embeddings.astype(np.float16)
