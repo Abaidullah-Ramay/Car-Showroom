@@ -26,3 +26,9 @@ data/*.npy
 # Local tooling
 .claude/
 .agents/
+
+# Authoring scripts and generated documents, kept local
+build_guide_docx.py
+build_spec_docx.py
+PROJECT_GUIDE.docx
+PROJECT_SPEC.docx
