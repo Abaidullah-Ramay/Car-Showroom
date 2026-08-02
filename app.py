@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
@@ -69,22 +71,41 @@ with st.sidebar:
     if st.session_state.user_api_key:
         st.success("Using your key. The shared allowance is untouched.")
 
+def demo_api_key():
+    """The shared key, read explicitly rather than left to the environment.
+
+    Streamlit copies secrets into os.environ, but lazily: the variable only appears
+    once something has touched st.secrets. This app never did, so on Streamlit Cloud
+    the environment stayed empty and constructing the OpenAI client raised before
+    the page could render. Reading st.secrets here is what actually makes the key
+    available, and the os.environ fallback covers a local .env.
+    """
+    try:
+        from_secrets = st.secrets.get("OPENAI_API_KEY", "")
+    except Exception:
+        from_secrets = ""      # no secrets.toml at all, which is fine locally
+    return str(from_secrets or os.environ.get("OPENAI_API_KEY", "")).strip()
+
+
 user_key = st.session_state.user_api_key
 own_key = bool(user_key)
+active_key = user_key or demo_api_key()
 
 # Rebuild the clients whenever the key changes, so a visitor's key takes effect
 # immediately and clearing it falls back to the shared one.
-if st.session_state.get("clients_for_key") != user_key:
-    embedder = get_embedder(user_key or None)
+if active_key and st.session_state.get("clients_for_key") != active_key:
+    embedder = get_embedder(active_key)
     st.session_state.embedder = embedder
     st.session_state.agent = build_agent(
-        cars, embeddings, embedder, sink, api_key=user_key or None
+        cars, embeddings, embedder, sink, api_key=active_key
     )
-    st.session_state.clients_for_key = user_key
-embedder = st.session_state.embedder
+    st.session_state.clients_for_key = active_key
+embedder = st.session_state.get("embedder")
 
 turns_left = max(0, FREE_TURNS - free_turns_used().get(visitor_id(), 0))
-can_talk = own_key or turns_left > 0
+# No key at all means no conversation. Say so plainly instead of letting the
+# client constructor raise a traceback across the whole page.
+can_talk = bool(active_key) and (own_key or turns_left > 0)
 
 st.title("Abaid Automobile Showroom")
 
@@ -279,6 +300,11 @@ ALLOWANCE_SPENT = (
     "can open any car for full details."
 )
 
+NO_KEY_CONFIGURED = (
+    "This deployment has no API key configured, so Sam is offline. Add your own "
+    "OpenAI key in the sidebar to try him out. Browsing still works."
+)
+
 
 # Sam runs the full page width across the top, with the results underneath.
 heading, clear = st.columns([6, 1], vertical_alignment="bottom")
@@ -314,7 +340,10 @@ if can_talk:
 else:
     st.chat_input("Add your API key in the sidebar to continue", disabled=True)
     user_text = None
-    st.warning(ALLOWANCE_SPENT, icon=":material/key:")
+    st.warning(
+        NO_KEY_CONFIGURED if not active_key else ALLOWANCE_SPENT,
+        icon=":material/key:",
+    )
 
 # Handled here rather than after the grid so the spinner appears next to the
 # conversation and the results below render from the updated sink on this same run,
