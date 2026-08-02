@@ -1,0 +1,13 @@
+# Runtime dependencies for Streamlit Community Cloud.
+#
+# Deliberately minimal and kept in step with the [project.dependencies] block in
+# pyproject.toml. The offline dataset pipeline needs torch, transformers and
+# kagglehub as well; those live in the "pipeline" extra and must not be installed
+# here, since the app never imports them and torch alone would dwarf the build.
+streamlit>=1.60.0
+pandas>=3.0.5
+numpy>=2.5.1
+pyarrow>=18.0.0
+python-dotenv>=1.2.2
+langchain-openai>=1.4.1
+langgraph>=1.2.9

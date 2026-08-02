@@ -5,7 +5,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
-from showroom.config import CARS_CSV, EMBED_MODEL, EMBEDDINGS_NPY
+from showroom.config import CARS_PARQUET, EMBED_MODEL, EMBEDDINGS_F16
 from showroom.query_parser import parse_query
 
 load_dotenv()
@@ -70,21 +70,24 @@ def build_embedding_text(row):
 
 
 def index_exists():
-    return CARS_CSV.exists() and EMBEDDINGS_NPY.exists()
+    return CARS_PARQUET.exists() and EMBEDDINGS_F16.exists()
 
 
 def load_data():
     if not index_exists():
         raise FileNotFoundError(
-            f"No search index found. Expected {CARS_CSV} and {EMBEDDINGS_NPY}.\n"
+            f"No search index found. Expected {CARS_PARQUET} and {EMBEDDINGS_F16}.\n"
             f"Build them with:\n"
-            f"  uv run python pipeline/build_topup.py\n"
-            f"  uv run python pipeline/vibe_tagging_topup.py\n"
-            f"  uv run python pipeline/build_embeddings.py"
+            f"  uv run python -m pipeline.build_dataset\n"
+            f"  uv run python -m pipeline.vibe_tagging\n"
+            f"  uv run python -m pipeline.build_embeddings\n"
+            f"  uv run python -m pipeline.prepare_deploy"
         )
 
-    cars = pd.read_csv(CARS_CSV)
-    embeddings = np.load(EMBEDDINGS_NPY)
+    cars = pd.read_parquet(CARS_PARQUET)
+    # Stored as float16 to halve the file on disk, widened once here so the dot
+    # product runs at full speed and memory matches the previous behaviour.
+    embeddings = np.load(EMBEDDINGS_F16).astype(np.float32)
     assert len(cars) == embeddings.shape[0], "cars/embeddings row count mismatch"
 
     for col in CATEGORICAL_COLS:
@@ -99,10 +102,17 @@ def load_data():
     return cars, embeddings
 
 
-def get_embedder():
-    """Must match the model the index was built with — vectors from different models
-    are not comparable, so changing EMBED_MODEL means rebuilding the index."""
-    return OpenAIEmbeddings(model=EMBED_MODEL)
+def get_embedder(api_key=None):
+    """Must match the model the index was built with: vectors from different models
+    are not comparable, so changing EMBED_MODEL means rebuilding the index.
+
+    `api_key` lets a visitor supply their own credentials once the free allowance is
+    used up. None falls back to the environment.
+    """
+    kwargs = {"model": EMBED_MODEL}
+    if api_key:
+        kwargs["api_key"] = api_key
+    return OpenAIEmbeddings(**kwargs)
 
 
 def _zscore(series):

@@ -375,8 +375,12 @@ def build_tools(cars, embeddings, embedder, sink):
     return [search_inventory, get_car_details, compare_cars, inventory_stats]
 
 
-def build_agent(cars, embeddings, embedder, sink):
-    """Wire the tools and prompt into a ReAct agent."""
+def build_agent(cars, embeddings, embedder, sink, api_key=None):
+    """Wire the tools and prompt into a ReAct agent.
+
+    `api_key` lets a visitor supply their own credentials once the free allowance
+    is used up. None falls back to the environment.
+    """
     tools = build_tools(cars, embeddings, embedder, sink)
 
     # A callable prompt so the on-screen cars are refreshed on every turn rather
@@ -384,4 +388,7 @@ def build_agent(cars, embeddings, embedder, sink):
     def prompt(state):
         return [SystemMessage(SALES_PROMPT + describe_grid(sink))] + state["messages"]
 
-    return create_react_agent(ChatOpenAI(model=CHAT_MODEL), tools, prompt=prompt)
+    kwargs = {"model": CHAT_MODEL}
+    if api_key:
+        kwargs["api_key"] = api_key
+    return create_react_agent(ChatOpenAI(**kwargs), tools, prompt=prompt)

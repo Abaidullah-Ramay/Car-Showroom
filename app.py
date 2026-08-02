@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 
+from showroom.config import FREE_TURNS
 from showroom.sales_agent import build_agent
 from showroom.search_engine import VIBE_MAP, get_embedder, load_data
 
@@ -20,8 +21,20 @@ def get_cars_data():
 
 
 @st.cache_resource
-def get_embedder_client():
-    return get_embedder()
+def free_turns_used():
+    """Turns spent per visitor, shared across every session in this app process.
+
+    Deliberately not per-session: a session counter resets on reload and in a new
+    tab, which makes it no limit at all. This survives both. It does reset when the
+    app sleeps or redeploys, and everyone behind one NAT shares an entry, so treat
+    it as budget-stretching rather than access control. The real protection is the
+    spend cap and rate limits configured on the API project.
+    """
+    return {}
+
+
+def visitor_id():
+    return getattr(st.context, "ip_address", None) or "local"
 
 
 try:
@@ -30,21 +43,48 @@ except FileNotFoundError as exc:
     st.error(str(exc))
     st.stop()
 
-embedder = get_embedder_client()
-
-# `sink` is the single source of truth for the results grid: the search box writes to
-# it, and so do the agent's search tools. Held per session and mutated in place —
-# never reassigned — because the agent's tools closed over this exact dict.
+# `sink` is the single source of truth for the results grid: the agent's search
+# tools write to it. Held per session and mutated in place, never reassigned,
+# because the tools closed over this exact dict.
 if "sink" not in st.session_state:
     st.session_state.sink = {}
-if "agent" not in st.session_state:
-    st.session_state.agent = build_agent(
-        cars, embeddings, embedder, st.session_state.sink
-    )
 if "history" not in st.session_state:
     st.session_state.history = []
+if "user_api_key" not in st.session_state:
+    st.session_state.user_api_key = ""
 
 sink = st.session_state.sink
+
+with st.sidebar:
+    st.subheader("Your own API key")
+    st.caption(
+        "The demo runs on a small shared allowance. Add your own OpenAI key to keep "
+        "talking to Sam once it runs out."
+    )
+    st.session_state.user_api_key = st.text_input(
+        "OpenAI API key", type="password", placeholder="sk-...",
+        value=st.session_state.user_api_key,
+        help="Used only for this browser session. Never stored or logged.",
+    ).strip()
+    if st.session_state.user_api_key:
+        st.success("Using your key. The shared allowance is untouched.")
+
+user_key = st.session_state.user_api_key
+own_key = bool(user_key)
+
+# Rebuild the clients whenever the key changes, so a visitor's key takes effect
+# immediately and clearing it falls back to the shared one.
+if st.session_state.get("clients_for_key") != user_key:
+    embedder = get_embedder(user_key or None)
+    st.session_state.embedder = embedder
+    st.session_state.agent = build_agent(
+        cars, embeddings, embedder, sink, api_key=user_key or None
+    )
+    st.session_state.clients_for_key = user_key
+embedder = st.session_state.embedder
+
+turns_left = max(0, FREE_TURNS - free_turns_used().get(visitor_id(), 0))
+can_talk = own_key or turns_left > 0
 
 st.title("Abaid Automobile Showroom")
 
@@ -209,6 +249,17 @@ def render_card(row):
             st.session_state.selected_car = int(row["id"])
 
 
+OUT_OF_CREDIT = (
+    "insufficient_quota", "exceeded your current quota", "billing_hard_limit",
+    "rate limit", "rate_limit", "429",
+)
+
+
+def looks_like_quota_error(exc):
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(marker in text for marker in OUT_OF_CREDIT)
+
+
 def run_agent(user_text):
     """One agent turn. His search tool mutates `sink`, so the results grid updates
     as a side effect of the conversation. That is the whole integration: there is no
@@ -216,6 +267,17 @@ def run_agent(user_text):
     st.session_state.history.append(HumanMessage(user_text))
     result = st.session_state.agent.invoke({"messages": st.session_state.history})
     st.session_state.history = result["messages"]
+    # Only a turn paid for out of the shared allowance counts against it.
+    if not own_key:
+        used = free_turns_used()
+        used[visitor_id()] = used.get(visitor_id(), 0) + 1
+
+
+ALLOWANCE_SPENT = (
+    "That is the shared demo allowance used up. Add your own OpenAI API key in the "
+    "sidebar to keep talking to Sam. Everything else on this page still works: you "
+    "can open any car for full details."
+)
 
 
 # Sam runs the full page width across the top, with the results underneath.
@@ -245,7 +307,14 @@ with transcript:
             if msg.content:
                 st.chat_message("assistant").write(md_safe(msg.content))
 
-user_text = st.chat_input("Describe the car you want, or ask Sam anything")
+if can_talk:
+    user_text = st.chat_input("Describe the car you want, or ask Sam anything")
+    if not own_key:
+        st.caption(f"{turns_left} of {FREE_TURNS} free messages left on the demo key.")
+else:
+    st.chat_input("Add your API key in the sidebar to continue", disabled=True)
+    user_text = None
+    st.warning(ALLOWANCE_SPENT, icon=":material/key:")
 
 # Handled here rather than after the grid so the spinner appears next to the
 # conversation and the results below render from the updated sink on this same run,
@@ -255,9 +324,23 @@ if user_text:
         try:
             run_agent(user_text)
         except Exception as exc:
-            st.session_state.history.append(
-                AIMessage(f"Sorry, something went wrong on my end: {exc}")
-            )
+            # A spent budget is an expected end state, not a crash. Saying "something
+            # went wrong" and printing the raw exception at a stranger is the wrong
+            # message at the worst moment.
+            if looks_like_quota_error(exc):
+                message = (
+                    "That key has hit its quota or rate limit. Check the key and its "
+                    "billing, then try again."
+                    if own_key else ALLOWANCE_SPENT
+                )
+                if not own_key:
+                    # Close the gate even if the counter had turns left: the budget
+                    # is gone, so further attempts would just fail again.
+                    free_turns_used()[visitor_id()] = FREE_TURNS
+            else:
+                message = "Sorry, something went wrong on my end. Please try again."
+                print(f"agent error: {type(exc).__name__}: {exc}")
+            st.session_state.history.append(AIMessage(message))
     # The transcript above already rendered, so a rerun is what actually shows the
     # new messages.
     st.rerun()

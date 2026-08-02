@@ -13,11 +13,16 @@ wheels/
 # OS
 .DS_Store
 
-# Data artifacts — all regenerable via the pipeline/ scripts.
-# The two built indexes are large (~120 MB); see README for how to rebuild them.
+# Working data artifacts: large intermediates (116 MB), regenerable via pipeline/.
 data/*.csv
 data/*.npy
 !data/.gitkeep
+
+# Deployment artifacts ARE committed. Streamlit Community Cloud only gets the repo,
+# so the app cannot build its own index there. 47 MB total, produced by
+# pipeline/prepare_deploy.py.
+!data/cars.parquet
+!data/embeddings_f16.npy
 
 # Logs
 *.log
